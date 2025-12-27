@@ -1,0 +1,80 @@
+# Performance: nightly + manual; starts docker-compose and app if available, runs short k6 smoke test when perf script exists, enforces optional p95 budget, uploads results.
+name: Performance
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  k6_smoke:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: infra/ci/docker-compose.ci.yml
+      TARGET_URL: http://localhost:3000
+      PERF_SCRIPT: tests/perf/smoke.js
+      P95_BUDGET_MS: ${{ secrets.P95_BUDGET_MS || 0 }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: perf_script
+        name: Check for perf script
+        shell: bash
+        run: |
+          if [[ -f "$PERF_SCRIPT" ]]; then
+            echo "Performance script found."
+            echo "has_perf=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No performance script found at $PERF_SCRIPT; skipping."
+            echo "has_perf=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Start services
+        if: steps.perf_script.outputs.has_perf == 'true'
+        run: docker compose -f "$COMPOSE_FILE" up -d
+      - name: Start app (best effort)
+        if: steps.perf_script.outputs.has_perf == 'true'
+        run: |
+          npm run start:perf --if-present || npm run start --if-present || npm run dev --if-present -- --host 0.0.0.0 --port 3000 || echo "No start script; continuing."
+          sleep 10
+      - name: Verify target availability
+        if: steps.perf_script.outputs.has_perf == 'true'
+        run: |
+          if curl -fsS "$TARGET_URL" >/dev/null; then
+            echo "Target reachable."
+          else
+            echo "Target not reachable; skipping performance test."
+            exit 0
+          fi
+      - name: Run k6 smoke
+        if: steps.perf_script.outputs.has_perf == 'true'
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: ${{ env.PERF_SCRIPT }}
+          flags: --vus 5 --duration 30s --quiet
+      - name: Enforce p95 budget (optional)
+        if: env.P95_BUDGET_MS != '0' && steps.perf_script.outputs.has_perf == 'true'
+        run: |
+          if [[ -f summary.json ]]; then
+            p95=$(jq -r '.metrics.http_req_duration["p(95)"].value' summary.json)
+            echo "Observed p95=${p95}ms, budget=${P95_BUDGET_MS}ms"
+            if (( $(echo "$p95 > $P95_BUDGET_MS" | bc -l) )); then
+              echo "p95 exceeds budget"; exit 1; fi
+          else
+            echo "No summary.json found; cannot enforce budget."
+          fi
+      - name: Upload results
+        if: always() && steps.perf_script.outputs.has_perf == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results
+          path: |
+            summary.json
+            k6-report.html
+            k6-output.*
+      - name: Shutdown
+        if: always() && steps.perf_script.outputs.has_perf == 'true'
+        run: docker compose -f "$COMPOSE_FILE" down -v

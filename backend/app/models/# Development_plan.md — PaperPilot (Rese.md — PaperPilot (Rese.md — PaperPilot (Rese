@@ -1,0 +1,518 @@
+# Development_plan.md — PaperPilot (Research‑to‑Publish Operating System)
+
+> **What this is:** a step‑by‑step, plain‑English build guide for PaperPilot / “Research‑to‑Publish OS (R‑P OS)”.  
+> **Goal:** after reading this, even a non‑technical person can understand what to build, and a developer can implement it end‑to‑end.
+
+PaperPilot’s core promise (from your blueprint PDFs):  
+**“Give me a topic. I’ll help you collect sources, organize them, create a structured draft with citations, and publish a final output faster.”**
+
+---
+
+## 0) What are we building (simple explanation)
+
+Imagine you want to write a report, research paper, legal draft, or blog that must be **credible**.
+
+Normally you:
+1) Google and collect PDFs/links  
+2) Make notes  
+3) Verify facts  
+4) Write draft  
+5) Add citations  
+6) Export and submit
+
+PaperPilot combines all of that into **one app**:
+- Upload sources (PDFs/links)
+- It extracts text and splits into “chunks”
+- It can search across your sources like Google (but only your library)
+- It helps you generate summaries, outlines, and drafts
+- Every claim can be linked back to a specific source snippet
+- It exports to PDF/DOCX and can format citations (APA/MLA/Chicago/Bluebook)
+
+---
+
+## 1) Product scope (features in human language)
+
+### 1.1 MVP (Minimum Viable Product)
+MVP = the smallest version that is usable and valuable.
+
+**MVP must do:**
+1) **User account + Projects**
+2) **Source Library**
+   - Upload PDF
+   - Add URL source
+   - Extract text + metadata
+3) **Search inside sources**
+4) **Summarize a source**
+5) **Create outline for a topic using sources**
+6) **Generate a draft section-by-section with citations**
+7) **Export DOCX + PDF**
+8) **Basic collaboration** (share project / comment) — optional for MVP, required for v1
+
+### 1.2 v1 (first “real product”)
+- Strict “no hallucination” mode: refuse uncited statements
+- Better citation styles (APA/MLA/Chicago/Bluebook)
+- Version history (outline + draft)
+- Plagiarism check integration (optional provider)
+- Usage tracking (credits / billing if needed)
+
+### 1.3 v2 (advanced)
+- Multi‑agent workflows (data agent, citation agent, content agent)
+- Advanced verification graph (“claim → snippet → source”)
+- Team/org management, approval workflow
+- Marketplace: templates for legal, academic, business, reports
+
+---
+
+## 2) Architecture (how the whole system is organized)
+
+### 2.1 Big picture (simple)
+We will build 5 main components:
+
+1) **Frontend (Website UI)**
+   - Pages: login, project dashboard, source library, outline builder, editor, export
+2) **Backend API**
+   - Handles authentication, projects, sources, AI jobs, exports, billing, permissions
+3) **Worker system (Background jobs)**
+   - PDF extraction, OCR, embedding, long AI generation, exports
+4) **Database**
+   - Stores users, projects, sources, notes, drafts, citations, audit logs
+5) **Search / Vector index**
+   - Lets you search semantically (meaning‑based) across source chunks
+
+### 2.2 Recommended stack (reference implementation)
+You can build with many stacks. This plan picks a “safe” reference stack.
+
+**Frontend**
+- Next.js (React) + TypeScript
+- Tailwind CSS (fast UI)
+- TipTap or Lexical editor (rich text with citations)
+
+**Backend**
+- FastAPI (Python) OR NestJS (Node) — choose one
+- Recommendation: **FastAPI** (great for AI workflows)
+
+**Database**
+- PostgreSQL
+- Use **pgvector** extension for vector search (so we don’t need a separate vector DB)
+
+**Cache / Queue**
+- Redis
+- Worker: Celery (Python) or RQ (simpler)
+
+**Storage**
+- Local for dev, S3‑compatible for prod (MinIO/AWS S3)
+
+**AI**
+- Provider abstraction: OpenAI / Anthropic / local models
+- Store prompts, outputs, and citations
+
+**Exports**
+- DOCX: python-docx
+- PDF: WeasyPrint or reportlab
+
+**Deployment**
+- Docker + docker-compose (dev)
+- Prod: VPS/Kubernetes/managed services
+
+> If you already have a stack in your repo, follow it. The plan below still applies.
+
+---
+
+## 3) Repository structure (clean and beginner-friendly)
+
+Recommended mono‑repo:
+
+```
+paperpilot/
+  apps/
+    web/                 # Next.js UI
+    api/                 # FastAPI backend
+    worker/              # background jobs (Celery/RQ)
+  packages/
+    shared/              # shared types, constants, utils
+  infra/
+    docker/              # Dockerfiles, compose files
+    k8s/                 # (optional) Kubernetes manifests
+  docs/
+    testing/
+    architecture/
+  tests/
+    unit/
+    integration/
+    api-contract/
+    ai-eval/
+  e2e/                   # Playwright tests
+  load/                  # k6/locust
+  security/              # scanners + configs
+  .github/workflows/
+```
+
+---
+
+## 4) Data model (what we store)
+
+### 4.1 Main entities (tables)
+**User**
+- id, email, password_hash, role, created_at
+
+**Workspace/Org** (optional MVP)
+- id, name, owner_id
+
+**Project**
+- id, name, description, owner_id, workspace_id
+
+**ProjectMember**
+- user_id, project_id, role (viewer/editor/admin)
+
+**Source**
+- id, project_id, type (pdf/url), title, author, published_date, url, file_path, hash, status
+
+**SourcePage / SourceChunk**
+- chunk_id, source_id, page_no, text, tokens, embedding_vector (pgvector)
+
+**Summary**
+- id, source_id, content, created_at
+
+**Outline**
+- id, project_id, version, json_structure, locked, created_at
+
+**Draft**
+- id, project_id, outline_version, content (rich text json), created_at
+
+**Citation**
+- id, draft_id, source_id, chunk_id, style, inline_text, reference_entry, page_no
+
+**AuditLog**
+- id, actor_user_id, action, entity_type, entity_id, timestamp, metadata
+
+**Usage/Billing (optional)**
+- subscription_id, credits, cost_log
+
+### 4.2 Why “chunks” matter (layman)
+PDFs are long. AI cannot read 200 pages in one go.
+So we split the text into small pieces called **chunks** (like paragraphs).  
+We search chunks and show where information came from.
+
+---
+
+## 5) User flows (exact steps the app must support)
+
+### 5.1 Flow: Create project → add sources
+1) User signs in
+2) Click “New Project”
+3) Upload PDF(s) OR paste URL
+4) Backend stores file, extracts text
+5) System creates chunks and embeddings
+6) Source becomes “Ready”
+
+### 5.2 Flow: Search + highlight
+1) User searches “fuel efficiency of model X”
+2) Backend finds best matching chunks
+3) UI shows snippet + source link + page number
+4) User can save snippet to notes
+
+### 5.3 Flow: Outline
+1) User enters topic + goal (“Write 10‑page report”)
+2) AI suggests outline sections
+3) User edits outline
+4) Save outline version
+
+### 5.4 Flow: Draft with citations
+1) User clicks “Generate draft”
+2) For each outline section:
+   - Retrieve relevant chunks
+   - Generate section text
+   - Attach citations pointing to chunk(s)
+3) Show draft in editor with citation markers
+4) “Strict mode” option: every paragraph must have citations
+
+### 5.5 Flow: Export
+1) User chooses citation style (APA/MLA/Chicago/Bluebook)
+2) Export to DOCX/PDF
+3) Reference list auto-generated
+4) Links back to sources included where possible
+
+---
+
+## 6) Backend API design (what endpoints you build)
+
+A clear API makes development easy. Example endpoints:
+
+### Auth
+- `POST /auth/signup`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `POST /auth/refresh`
+- `POST /auth/password/reset-request`
+- `POST /auth/password/reset-confirm`
+
+### Projects
+- `GET /projects`
+- `POST /projects`
+- `GET /projects/{id}`
+- `PATCH /projects/{id}`
+- `DELETE /projects/{id}`
+
+### Members / RBAC
+- `POST /projects/{id}/invite`
+- `POST /projects/{id}/members/{userId}/role`
+- `DELETE /projects/{id}/members/{userId}`
+
+### Sources
+- `POST /projects/{id}/sources/pdf`
+- `POST /projects/{id}/sources/url`
+- `GET /projects/{id}/sources`
+- `GET /sources/{sourceId}`
+- `DELETE /sources/{sourceId}`
+
+### Search
+- `GET /projects/{id}/search?q=...&topK=10&filters=...`
+
+### Summaries
+- `POST /sources/{sourceId}/summarize`
+- `GET /sources/{sourceId}/summary`
+
+### Outline
+- `POST /projects/{id}/outline/generate`
+- `GET /projects/{id}/outline`
+- `POST /projects/{id}/outline/save`
+- `POST /projects/{id}/outline/lock`
+
+### Draft
+- `POST /projects/{id}/draft/generate`
+- `GET /projects/{id}/draft`
+- `POST /projects/{id}/draft/save`
+
+### Citations
+- `POST /projects/{id}/citations/style`
+- `GET /projects/{id}/citations/reference-list`
+
+### Export
+- `POST /projects/{id}/export/docx`
+- `POST /projects/{id}/export/pdf`
+- `GET /exports/{exportId}/download`
+
+### Jobs
+- `GET /jobs/{jobId}` (status: queued/running/success/failed)
+
+---
+
+## 7) AI layer (how to keep it “credible”)
+
+### 7.1 RAG (Retrieval Augmented Generation)
+Instead of asking AI to “make things up”, we:
+1) Retrieve best source chunks
+2) Give those chunks to the AI
+3) Ask AI to write using only that evidence
+4) Store citations mapping output → chunk ids
+
+### 7.2 The “No hallucination” guardrails
+- **Strict mode**: if a paragraph has no citations, reject it
+- **Claim tracing**: each key claim must map to a snippet
+- **Citation mismatch detection**: detect if text cites wrong source
+
+### 7.3 Prompt strategy (simple)
+- System prompt: “Use only provided sources”
+- Output format includes citations:
+  - `[CITE:sourceId:chunkId:page]`
+
+Later the editor converts that into UI citation chips.
+
+---
+
+## 8) Frontend (what pages to build)
+
+### 8.1 Pages (minimum)
+- `/login`, `/signup`
+- `/dashboard` (projects list)
+- `/project/[id]/library` (sources)
+- `/project/[id]/search`
+- `/project/[id]/outline`
+- `/project/[id]/editor`
+- `/project/[id]/export`
+
+### 8.2 Editor requirements
+- Rich text editing
+- Citation chip insertion
+- Reference list view
+- Version history (v1)
+- Comments (v1)
+
+---
+
+## 9) Background jobs (worker)
+
+Some tasks are too slow for direct API response.
+
+### Jobs to implement
+- `extract_pdf_text_job(source_id)`
+- `ocr_job(source_id)` (optional)
+- `chunk_and_embed_job(source_id)`
+- `summarize_source_job(source_id)`
+- `generate_outline_job(project_id)`
+- `generate_draft_job(project_id, outline_version)`
+- `export_docx_job(project_id)`
+- `export_pdf_job(project_id)`
+
+Each job writes status updates to `jobs` table.
+
+---
+
+## 10) Local development setup (step-by-step)
+
+### 10.1 Requirements
+- Git
+- Docker Desktop
+- Node 20+
+- Python 3.11+
+- Make (optional)
+
+### 10.2 Environment files
+Create:
+- `.env` (local)
+- `.env.test` (tests)
+- `.env.example` (template)
+
+### 10.3 Docker compose (dev)
+Services:
+- postgres
+- redis
+- minio (optional)
+- api
+- worker
+- web
+
+### 10.4 Commands (example)
+- `docker compose up -d postgres redis`
+- `cd apps/api && uvicorn app.main:app --reload`
+- `cd apps/worker && celery -A worker.app worker -l info`
+- `cd apps/web && npm run dev`
+
+---
+
+## 11) Testing plan (must be automated)
+
+### 11.1 Test categories
+- Unit tests: fast, no external network
+- Integration tests: real DB + mocked AI
+- API contract tests: OpenAPI schema stability
+- E2E UI tests: real browser flows (Playwright)
+- Load tests: k6/locust
+- Security tests: dependency scanning, RBAC checks
+- AI eval: offline dataset scoring
+
+### 11.2 “Definition of Done” for any feature
+A feature is done only when:
+- Unit tests written
+- Integration test covers success path
+- Error handling tested
+- Logging added
+- Security check (RBAC) verified
+- Docs updated
+
+---
+
+## 12) CI/CD (automatic pipeline)
+
+### 12.1 GitHub Actions jobs
+- Lint (frontend + backend)
+- Unit tests
+- Integration tests (with Postgres service)
+- E2E tests
+- Build artifacts
+- Security scans
+- Upload reports (junit/html)
+
+### 12.2 Environments
+- dev (feature branches)
+- staging (main branch)
+- production (release tag)
+
+---
+
+## 13) Security and compliance (India-first)
+- Encrypt secrets (env + secret manager)
+- RBAC for project data
+- Audit logs for sensitive actions
+- Rate limiting on auth and AI endpoints
+- Input sanitization (URL import, HTML)
+
+Optional:
+- Data residency choices (India region hosting)
+- Export and deletion flows (“delete my project”)
+
+---
+
+## 14) Milestones (practical build order)
+
+### Phase 1 (Week 1–2): Foundation
+- Repo setup + docker compose
+- Auth + projects
+- DB migrations
+- Basic UI skeleton
+
+### Phase 2 (Week 3–4): Sources
+- Upload PDF + URL import
+- Text extraction
+- Chunking + pgvector embeddings
+- Search API + UI
+
+### Phase 3 (Week 5–6): Writing
+- Summaries
+- Outline generator
+- Draft generator with citations
+- Editor integration
+
+### Phase 4 (Week 7): Export
+- DOCX export
+- PDF export
+- Citation styles
+
+### Phase 5 (Week 8): Quality
+- Strict mode
+- Verification graph
+- Tests + CI/CD
+- Basic collaboration
+
+---
+
+## 15) Common pitfalls (and how to avoid them)
+1) **AI hallucinations** → enforce citations + strict mode  
+2) **Slow generation** → move to workers + job status  
+3) **Bad search** → tune chunk size + store headings/pages  
+4) **Citation formatting bugs** → test citation styles with fixed fixtures  
+5) **Permission leaks** → test RBAC on every endpoint  
+
+---
+
+## 16) “If you do only one thing”: build the pipeline
+The product lives or dies by this pipeline:
+
+**Upload sources → extract → chunk → embed → search → outline → draft → cite → export**
+
+Build that end‑to‑end first, then polish UI and add advanced features.
+
+---
+
+## Appendix A: Minimal checklist (for a layman to track progress)
+
+- [ ] Can I create an account and log in?
+- [ ] Can I create a project?
+- [ ] Can I upload a PDF and see it in my library?
+- [ ] Can I search my PDF content?
+- [ ] Can I generate a summary?
+- [ ] Can I generate an outline?
+- [ ] Can I generate a draft with citations?
+- [ ] Can I export to DOCX and PDF?
+- [ ] Do citations point to exact source snippets?
+- [ ] Are permissions correct (others can’t see my project unless shared)?
+
+---
+
+## Appendix B: Glossary (plain meanings)
+- **Chunk**: a small piece of text from a source (like a paragraph)
+- **Embedding**: a numeric representation of text used for semantic search
+- **Vector search**: search by meaning, not exact words
+- **RAG**: AI writes using retrieved source chunks as evidence
+- **RBAC**: role-based access control (viewer/editor/admin)
+- **Worker**: background job processor for slow tasks

@@ -1,0 +1,28 @@
+# Code owners for PaperPilot
+# When a PR affects files in these paths, request review from the listed owners
+
+# Global owners
+* @paperpilot/maintainers
+
+# Frontend
+apps/web/ @paperpilot/frontend-team
+package.json @paperpilot/frontend-team
+prettier.config.js @paperpilot/frontend-team
+
+# Backend
+backend/ @paperpilot/backend-team
+pyproject.toml @paperpilot/backend-team
+
+# Infrastructure
+infra/ @paperpilot/devops-team
+.github/ @paperpilot/devops-team
+Makefile @paperpilot/devops-team
+scripts/ @paperpilot/devops-team
+
+# Documentation
+docs/ @paperpilot/docs-team
+README.md @paperpilot/docs-team
+CONTRIBUTING.md @paperpilot/docs-team
+
+# Security
+.github/workflows/security.yml @paperpilot/security-team

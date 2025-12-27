@@ -1,0 +1,40 @@
+# Release gate: tag push v*.*.*; re-runs integration + E2E + security suites, then creates GitHub Release with generated notes. No deploy included.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    uses: ./.github/workflows/ci_integration.yml
+
+  e2e:
+    uses: ./.github/workflows/ci_e2e.yml
+
+  security:
+    uses: ./.github/workflows/security.yml
+
+  release_notes:
+    name: Create GitHub Release
+    needs:
+      - integration
+      - e2e
+      - security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: ${{ github.ref_name }}
+          generate_release_notes: true

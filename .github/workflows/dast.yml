@@ -1,0 +1,51 @@
+# DAST: nightly and manual; starts docker-compose services, attempts to boot app, runs OWASP ZAP baseline against localhost, uploads report; skips if app unreachable.
+name: DAST
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zap_scan:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: infra/ci/docker-compose.ci.yml
+      TARGET_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start services
+        run: docker compose -f "$COMPOSE_FILE" up -d
+      - name: Start app (best effort)
+        run: |
+          npm run start:e2e --if-present || npm run start --if-present || npm run dev --if-present -- --host 0.0.0.0 --port 3000 || echo "No start script; continuing."
+          sleep 10
+      - name: Verify target availability
+        run: |
+          if curl -fsS "$TARGET_URL" >/dev/null; then
+            echo "Target reachable."
+          else
+            echo "Target not reachable; skipping ZAP scan."
+            exit 0
+          fi
+      - name: OWASP ZAP Baseline
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: ${{ env.TARGET_URL }}
+          cmd_options: "-I"
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            report.html
+            report.json
+      - name: Shutdown
+        if: always()
+        run: docker compose -f "$COMPOSE_FILE" down -v

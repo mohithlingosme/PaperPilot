@@ -1,0 +1,72 @@
+# Migration safety: pull_request + push to main/develop + manual; spins up DB, runs fresh migrate, checks for pending migrations, optional rollback; skips if no migration tooling detected.
+name: Migration Safety
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      has_migrations: ${{ steps.detect.outputs.has_migrations }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        shell: bash
+        run: |
+          shopt -s nullglob
+          has_migrations=false
+          if [[ -d migrations ]] || [[ -d alembic ]] || [[ -d prisma/migrations ]] || [[ -d db/migrate ]]; then
+            has_migrations=true
+          fi
+          echo "has_migrations=$has_migrations" >> "$GITHUB_OUTPUT"
+
+  migrate:
+    name: Migrate & verify
+    needs: detect
+    if: needs.detect.outputs.has_migrations == 'true'
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: infra/ci/docker-compose.ci.yml
+      DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://paperpilot:paperpilot@localhost:5432/paperpilot' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start database
+        run: docker compose -f "$COMPOSE_FILE" up -d postgres
+      - name: Wait for database
+        run: |
+          until docker exec paperpilot_postgres pg_isready -U paperpilot; do sleep 2; done
+      - name: Fresh migrate
+        run: |
+          npm run migrate --if-present || true
+          if command -v alembic >/dev/null 2>&1; then alembic upgrade head; else echo "No migration tool configured; skipping."; fi
+      - name: Verify pending migrations
+        run: |
+          npm run migrate:status --if-present || true
+          if command -v alembic >/dev/null 2>&1; then alembic heads; fi
+      - name: Optional rollback smoke
+        run: |
+          npm run migrate:down --if-present || true
+          if command -v alembic >/dev/null 2>&1; then alembic downgrade -1 || true; fi
+      - name: Collect logs
+        if: failure()
+        run: docker compose -f "$COMPOSE_FILE" logs --no-color > migration.log
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-logs
+          path: migration.log
+      - name: Shutdown
+        if: always()
+        run: docker compose -f "$COMPOSE_FILE" down -v

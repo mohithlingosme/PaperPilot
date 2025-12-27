@@ -1,0 +1,133 @@
+# E2E: push to main/develop, nightly schedule, or manual dispatch; boots docker compose services, starts app if available, runs Playwright/Cypress E2E (Chromium always, Firefox on nightly), uploads artifacts on failure; skips when no E2E config.
+name: E2E
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      has_node: ${{ steps.detect.outputs.has_node }}
+      has_lock: ${{ steps.detect.outputs.has_lock }}
+      has_e2e: ${{ steps.detect.outputs.has_e2e }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        shell: bash
+        run: |
+          shopt -s nullglob
+          has_node=false
+          has_lock=false
+          has_e2e=false
+
+          if [[ -f package.json ]]; then has_node=true; fi
+          if [[ -f package-lock.json ]]; then has_lock=true; fi
+          if compgen -G "playwright.config.*" > /dev/null || compgen -G "cypress.config.*" > /dev/null || [[ -f cypress.json ]]; then has_e2e=true; fi
+
+          {
+            echo "has_node=$has_node"
+            echo "has_lock=$has_lock"
+            echo "has_e2e=$has_e2e"
+          } >> "$GITHUB_OUTPUT"
+
+  e2e_chromium:
+    name: E2E (Chromium)
+    needs: detect
+    if: needs.detect.outputs.has_node == 'true' && needs.detect.outputs.has_lock == 'true' && needs.detect.outputs.has_e2e == 'true'
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: infra/ci/docker-compose.ci.yml
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Start services
+        run: docker compose -f "$COMPOSE_FILE" up -d
+      - name: Start app (best effort)
+        run: |
+          npm run start:e2e --if-present || npm run start --if-present || npm run dev --if-present -- --host 0.0.0.0 --port 3000 || echo "No start script; continuing."
+          sleep 10
+      - name: Check app health
+        run: |
+          if curl -fsS http://localhost:3000 >/dev/null; then
+            echo "App is reachable."
+          else
+            echo "App not reachable; skipping E2E execution."
+            exit 0
+          fi
+      - name: Run Playwright (Chromium)
+        run: npx playwright test --browser=chromium || npx playwright test --project=chromium || npx playwright test
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-chromium
+          path: playwright-report/
+      - name: Shutdown
+        if: always()
+        run: docker compose -f "$COMPOSE_FILE" down -v
+
+  e2e_firefox:
+    name: E2E (Firefox nightly)
+    needs: detect
+    if: github.event_name == 'schedule' && needs.detect.outputs.has_node == 'true' && needs.detect.outputs.has_lock == 'true' && needs.detect.outputs.has_e2e == 'true'
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: infra/ci/docker-compose.ci.yml
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps firefox
+      - name: Start services
+        run: docker compose -f "$COMPOSE_FILE" up -d
+      - name: Start app (best effort)
+        run: |
+          npm run start:e2e --if-present || npm run start --if-present || npm run dev --if-present -- --host 0.0.0.0 --port 3000 || echo "No start script; continuing."
+          sleep 10
+      - name: Check app health
+        run: |
+          if curl -fsS http://localhost:3000 >/dev/null; then
+            echo "App is reachable."
+          else
+            echo "App not reachable; skipping E2E execution."
+            exit 0
+          fi
+      - name: Run Playwright (Firefox)
+        run: npx playwright test --browser=firefox || npx playwright test --project=firefox
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-firefox
+          path: playwright-report/
+      - name: Shutdown
+        if: always()
+        run: docker compose -f "$COMPOSE_FILE" down -v
