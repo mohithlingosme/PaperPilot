@@ -1,474 +1,276 @@
-# TODO.md — PaperPilot (Research‑to‑Publish OS) Complete Development Checklist
+# Database Implementation TODO
 
-> **Purpose:** a single, end‑to‑end task list to build PaperPilot from zero → production.  
-> **How to use:** assign boxes to sprints/owners; keep links to PRs/issues next to completed items.
+## 1. Database Domains List (Docs)
+- [x] Create docs/database/DB_LIST.md with logical schema domains and what each stores
 
-Legend:
-- **[P0]** MVP must-have
-- **[P1]** v1 (strongly recommended)
-- **[P2]** v2 / advanced
-- Add an owner + link when you start: `(@owner • #issue • PR link)`
+## 2. Postgres Schema (Normalized, Multi-tenant)
+- [x] Redesign all models with UUID primary keys, multi-tenancy via workspace_id
+- [x] Implement required entities: users, sessions, api_keys, workspaces, roles, workspace_members, projects, sources, source_versions, source_files, source_pages, source_spans, pipeline_jobs, job_attempts, notes, note_versions, drafts, draft_versions, citations, exports, export_files, audit_events, usage_events
+- [x] Add proper FK constraints, created_at/updated_at/deleted_at where useful
+- [x] Implement indexes: FKs, (workspace_id, created_at), (project_id, created_at), pipeline queue, citations lookups
 
----
+## 3. Migrations
+- [x] Set up Alembic for migrations
+- [x] Create infra/db/migrations/0001_init.sql (schemas + tables + constraints)
+- [x] Create infra/db/migrations/0002_indexes.sql (all indexes)
+- [x] Create infra/db/migrations/0003_seed.sql (roles + minimal defaults)
+- [x] Add scripts: db:migrate, db:reset, db:status
+- [x] Update .env.example with DATABASE_URL
 
-## 0) Repo, Standards, and Project Governance
+## 4. DB Utility Layer (Code)
+- [x] Add connection pooling/engine creation
+- [x] Transaction helper
+- [x] Query helper (typed)
+- [x] Pagination helper (cursor-based)
+- [x] Soft delete helper
+- [x] Implement repositories: Workspace, Project, Source, PipelineJob, Draft, Citation
+- [x] Add check_db_ready() for /ready
 
-### 0.1 Repository foundation
-- [ ] [P0] Initialize repo (mono‑repo recommended): `apps/web`, `apps/api`, `apps/worker`, `packages/shared`, `infra/`, `docs/`, `tests/`, `e2e/`, `load/`, `security/`
-- [ ] [P0] Add root `README.md` (what it is, how to run, how to contribute)
-- [ ] [P0] Add `Development_plan.md` (link from README)
-- [ ] [P0] Add `.editorconfig`, `.gitattributes`
-- [ ] [P0] Add lint/format configs (Prettier + ESLint for web; ruff/black for Python OR equivalent for Node)
-- [ ] [P0] Add commit conventions (Conventional Commits) + PR template
-- [ ] [P0] Add `CODEOWNERS`, `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE`
-- [ ] [P0] Add basic issue labels (P0/P1/P2, backend/frontend/infra/bug/security)
+## 5. Local Docker (Postgres)
+- [x] Add infra/docker-compose.db.yml with Postgres service, volume, healthcheck
+- [x] Optional pgAdmin
+- [x] Add scripts/db-reset.sh, scripts/db-migrate.sh
 
-### 0.2 Dev workflow
-- [ ] [P0] Define branch strategy (feature branches → PR → main)
-- [ ] [P0] Define versioning + changelog strategy (tags, `CHANGELOG.md`)
-- [ ] [P0] Define DoD (Definition of Done): tests + docs + RBAC checks + logs
-- [ ] [P1] Add architecture docs folder: `docs/architecture/*`
-- [ ] [P1] Add ADRs (Architecture Decision Records) template
+## 6. Tests (Minimal Integration)
+- [x] Add basic integration tests: start DB, run migrations, insert/read via repos, assert constraints
 
----
+## 7. Documentation
+- [x] Create docs/database/ERD.md (ASCII ERD)
+- [x] Create docs/database/DB_UTILS.md (how to migrate/reset/seed, repo usage)
 
-## 1) Local Development Environment (Everything runs on a laptop)
+# TODO.md — Core Data Model & Database (PaperPilot)
 
-### 1.1 Docker + environment
-- [ ] [P0] Create `docker-compose.yml` for dev:
-  - [ ] Postgres (+ pgvector extension if used)
-  - [ ] Redis (queue/cache)
-  - [ ] MinIO (S3 compatible) OR local filesystem volume for uploads
-  - [ ] API service
-  - [ ] Worker service
-  - [ ] Web service
-- [ ] [P0] Create `.env.example` with all required variables
-- [ ] [P0] Create `.env` (local) and `.env.test` (tests)
-- [ ] [P0] Add Makefile (or npm scripts) for:
-  - [ ] `make dev` (start all)
-  - [ ] `make down`
-  - [ ] `make logs`
-  - [ ] `make db-migrate`
-  - [ ] `make test`
-- [ ] [P1] Add one-command onboarding: `./scripts/bootstrap.sh`
-
-### 1.2 Observability in dev
-- [ ] [P0] Add structured logging to API + worker (request id / job id)
-- [ ] [P1] Add health endpoints: `/health`, `/ready`
-- [ ] [P1] Add basic metrics endpoint (Prometheus style) OR logging counters
+## Goals
+- Define the **core relational data model** for PaperPilot (workspaces → projects → sources → processing → notes/drafts → citations → exports).
+- Implement **PostgreSQL schema + migrations**.
+- Add a **DB utility layer** (connection, migrations, transactions, repositories, seeds, test DB reset).
 
 ---
 
-## 2) Core Data Model & Database
+## P0 — Decisions & Foundations
 
-### 2.1 Database schema (MVP)
-- [ ] [P0] Choose DB + ORM (Postgres recommended)
-- [ ] [P0] Create migrations for:
-  - [ ] users
-  - [ ] refresh_sessions / tokens (if using refresh tokens)
-  - [ ] projects
-  - [ ] project_members (RBAC)
-  - [ ] sources (pdf/url)
-  - [ ] source_files (storage path, hash, size, mime)
-  - [ ] source_pages (optional) OR store page numbers on chunks
-  - [ ] source_chunks (text, token_count, page_no, heading_path, embedding vector)
-  - [ ] summaries
-  - [ ] outlines (versioned, locked flag)
-  - [ ] drafts (versioned)
-  - [ ] citations (draft ↔ chunk mapping, style, page/locator)
-  - [ ] exports (docx/pdf) + status + file pointer
-  - [ ] jobs (background job status)
-  - [ ] audit_logs
-- [ ] [P1] Add org/workspace tables (optional if multi-tenant)
-- [ ] [P1] Add usage tracking tables (credits/cost logs)
-- [ ] [P2] Add collaboration comments + mentions tables
-
-### 2.2 DB utilities
-- [ ] [P0] Add DB connection config (single `DATABASE_URL`)
-- [ ] [P0] Add seed scripts for dev (admin user, sample project, sample sources)
-- [ ] [P0] Add safe DB reset script for dev/test
-- [ ] [P1] Add DB indexes for performance (project_id, source_id, created_at, embeddings index)
-- [ ] [P1] Add row-level constraints + FK cascades designed carefully
+- [ ] [P0] Decide DB strategy:
+  - [ ] Use **PostgreSQL** as primary DB
+  - [ ] Use **one database** with **multiple schemas/namespaces** (recommended) OR multiple DBs (justify if needed)
+  - [ ] Decide PK type: `uuid` everywhere (preferred) vs `bigserial`
+- [ ] [P0] Define baseline conventions:
+  - [ ] Standard columns: `id`, `created_at`, `updated_at`, `deleted_at` (soft delete where relevant)
+  - [ ] `workspace_id` required for multi-tenancy on all workspace-scoped tables
+  - [ ] Enforce UTC timestamps at DB layer
+- [ ] [P0] Create `/docs/database/` folder structure:
+  - [ ] `/docs/database/DB_LIST.md`
+  - [ ] `/docs/database/ERD.md`
+  - [ ] `/docs/database/SCHEMA_NOTES.md`
+  - [ ] `/docs/database/DB_UTILS.md`
 
 ---
 
-## 3) Authentication, Authorization, and Security Baselines
+## P0 — 1A) List of Required Databases / Schema Domains
 
-### 3.1 Auth (MVP)
-- [ ] [P0] Implement signup/login/logout
-- [ ] [P0] Password hashing (bcrypt/argon2)
-- [ ] [P0] JWT access token + refresh token/session rotation
-- [ ] [P0] Session expiry and refresh endpoint
-- [ ] [P0] Password reset flow (request + confirm)
-- [ ] [P0] Rate limit auth endpoints (login/reset)
-
-### 3.2 RBAC (MVP)
-- [ ] [P0] Implement project-level roles: viewer/editor/admin
-- [ ] [P0] Middleware/dependencies to enforce permissions
-- [ ] [P0] Ensure all project scoped endpoints verify membership
-- [ ] [P1] Audit logs for role changes + critical actions
-
-### 3.3 MFA (v1)
-- [ ] [P1] Add TOTP MFA enable/disable
-- [ ] [P1] Add recovery codes
-- [ ] [P1] Add MFA required on login when enabled
-
-### 3.4 Security baseline
-- [ ] [P0] Input validation everywhere (request schemas)
-- [ ] [P0] File upload validation (mime, size, extension, virus stub hook)
-- [ ] [P0] URL import sanitization (SSRF protection: allowlist/deny private IP ranges)
-- [ ] [P0] CORS config
-- [ ] [P0] CSRF strategy (if cookies used)
-- [ ] [P1] Secrets management plan (never commit secrets)
-- [ ] [P1] Data deletion flow (delete project and purge files)
-- [ ] [P2] Encryption at rest plan (DB + object storage)
+- [ ] [P0] Write `docs/database/DB_LIST.md` with logical domains (schemas):
+  - [ ] `auth_identity` (users, sessions, api keys)
+  - [ ] `workspaces_projects` (workspaces, members, roles, projects)
+  - [ ] `sources_library` (sources, versions, files/pointers, pages/spans)
+  - [ ] `processing_pipeline` (jobs, attempts, status, retries, DLQ)
+  - [ ] `notes_drafts` (notes, drafts, versions)
+  - [ ] `citations_claims` (citations, claim mappings, source spans)
+  - [ ] `exports` (export jobs, export files, templates)
+  - [ ] `billing_usage` (usage events, tokens, OCR pages) — optional now
+  - [ ] `audit_events` (immutable event log)
+- [ ] [P0] Map each domain → expected queries + indexes (short section per domain)
 
 ---
 
-## 4) Backend API (FastAPI/Nest/Express) — Endpoints & Contracts
+## P0 — 1B) Schema Design (Relational Model)
 
-### 4.1 API foundation
-- [ ] [P0] Create API service skeleton
-- [ ] [P0] Add request/response schemas + consistent error format:
-  - [ ] `error.code`, `error.message`, `error.details`, `request_id`
-- [ ] [P0] Add OpenAPI generation (or swagger) + store spec artifact in CI
+### Multi-tenancy & Authorization
+- [ ] [P0] Define roles/permissions approach:
+  - [ ] `roles` table (predefined: owner/admin/editor/viewer)
+  - [ ] `workspace_members` with role assignment
+  - [ ] Index membership lookup by `(workspace_id, user_id)`
 
-### 4.2 Projects
-- [ ] [P0] CRUD endpoints: list/create/get/update/delete
-- [ ] [P0] Member management:
-  - [ ] invite flow (email token OR share link)
-  - [ ] accept/revoke
-  - [ ] role changes
+### Auth / Identity
+- [ ] [P0] Tables:
+  - [ ] `users` (email, name, status)
+  - [ ] `sessions` (user_id, refresh token hash, expires_at)
+  - [ ] `api_keys` (user_id/workspace_id, key_hash, last_used_at)
+- [ ] [P0] Constraints:
+  - [ ] unique email
+  - [ ] token/key hashes never stored raw (hash only)
 
-### 4.3 Sources & Library
-- [ ] [P0] Upload PDF endpoint (multipart)
-- [ ] [P0] Create URL source endpoint
-- [ ] [P0] List sources in project (filter/sort/pagination)
-- [ ] [P0] Get source detail (metadata + status)
-- [ ] [P0] Delete source (and cascade chunks/embeddings/files)
-- [ ] [P1] Source versioning (re-upload / update)
+### Workspaces / Projects
+- [ ] [P0] Tables:
+  - [ ] `workspaces`
+  - [ ] `workspace_members`
+  - [ ] `projects`
+- [ ] [P0] Constraints + indexes:
+  - [ ] unique workspace slug (if used)
+  - [ ] `(workspace_id, created_at)` index for list pages
 
-### 4.4 Search
-- [ ] [P0] Implement semantic search endpoint:
-  - [ ] query → embeddings → vector search on chunks
-  - [ ] filters: source_id, date, tags, type
-  - [ ] include snippet + page locator + score
-- [ ] [P1] Implement keyword fallback search (tsvector) and blended ranking
-- [ ] [P1] Add “recent searches” + analytics events
+### Sources Library
+- [ ] [P0] Tables:
+  - [ ] `sources` (workspace_id, project_id, type: pdf/url/text, title, metadata json)
+  - [ ] `source_versions` (source_id, version_no, checksum, created_by)
+  - [ ] `source_files` (source_version_id, storage_provider, bucket, key/path, size, mime)
+  - [ ] `source_pages` (source_version_id, page_no, text, ocr_status) — optional but recommended
+  - [ ] `source_spans` (page_id, start_offset, end_offset, snippet) for citations
+- [ ] [P0] Indexes:
+  - [ ] `(workspace_id, project_id, created_at)`
+  - [ ] `(source_id, version_no)` unique
+  - [ ] spans lookup by `(page_id, start_offset)`
 
-### 4.5 Summaries
-- [ ] [P0] Summarize a source (job-based)
-- [ ] [P0] Read cached summary
-- [ ] [P1] Multi-length summaries (short/medium/long)
+### Processing Pipeline
+- [ ] [P0] Tables:
+  - [ ] `pipeline_jobs` (workspace_id, project_id, source_id, type, status, priority)
+  - [ ] `job_attempts` (job_id, attempt_no, started_at, finished_at, error)
+  - [ ] `job_artifacts` (job_id, kind, pointer/json) — optional
+- [ ] [P0] Job types (enum or table):
+  - [ ] ingest/parse
+  - [ ] OCR
+  - [ ] embeddings (optional)
+  - [ ] summarization
+  - [ ] draft_generation
+  - [ ] export_generation
+- [ ] [P0] Indexes:
+  - [ ] job queue fetch index on `(status, priority, created_at)`
+  - [ ] `(source_id, type, status)`
 
-### 4.6 Outline
-- [ ] [P0] Generate outline from topic + sources
-- [ ] [P0] Save outline (versioned)
-- [ ] [P0] Lock/unlock outline version
-- [ ] [P1] Outline templates (legal, business, academic)
+### Notes / Drafts + Versioning
+- [ ] [P0] Tables:
+  - [ ] `notes` + `note_versions`
+  - [ ] `drafts` + `draft_versions`
+- [ ] [P0] Versioning rules:
+  - [ ] `*_versions` immutable rows
+  - [ ] latest pointer on parent table (optional) OR query by max version
+- [ ] [P0] Indexes:
+  - [ ] `(draft_id, version_no)` unique
+  - [ ] `(workspace_id, project_id, updated_at)` for listing
 
-### 4.7 Draft generation (RAG)
-- [ ] [P0] Generate draft section-by-section from outline version
-- [ ] [P0] Require citations mapping output → chunks
-- [ ] [P0] Save draft version
-- [ ] [P1] Style controls (tone, length, audience)
-- [ ] [P1] Idempotency keys for retries
-- [ ] [P2] Multi-agent generation (planner/writer/citation verifier)
+### Citations / Claims
+- [ ] [P0] Tables:
+  - [ ] `citations` (draft_version_id, source_span_id, confidence, note, quote)
+  - [ ] `claims` (draft_version_id, claim_text, normalized_hash) — optional
+  - [ ] `claim_citations` (claim_id, citation_id) — optional
+- [ ] [P0] Constraints:
+  - [ ] prevent duplicate citation rows for same (draft_version_id, source_span_id)
 
-### 4.8 Citations & Reference lists
-- [ ] [P0] Store citation markers (sourceId, chunkId, page)
-- [ ] [P0] Generate reference list from citations
-- [ ] [P1] Style renderers:
-  - [ ] APA
-  - [ ] MLA
-  - [ ] Chicago
-  - [ ] Bluebook (basic)
-- [ ] [P1] Deduplicate citations + merge references
-- [ ] [P1] Edge cases (page ranges, multiple authors)
+### Exports
+- [ ] [P0] Tables:
+  - [ ] `exports` (draft_version_id, format, status)
+  - [ ] `export_files` (export_id, storage pointer, size, checksum)
+  - [ ] `export_templates` (workspace_id, name, config json) — optional
+- [ ] [P0] Indexes:
+  - [ ] `(draft_version_id, created_at)`
 
-### 4.9 Exports
-- [ ] [P0] Export DOCX job
-- [ ] [P0] Export PDF job
-- [ ] [P0] Export must include reference list + working citation formatting
-- [ ] [P1] Links back to sources (where possible)
-- [ ] [P1] Export watermarking / branding options
-
-### 4.10 Jobs / status
-- [ ] [P0] Job status model: queued/running/success/failed + progress
-- [ ] [P0] `GET /jobs/{id}` endpoint
-- [ ] [P0] Standard retry policy + safe idempotency
-
-### 4.11 Audit, notifications, analytics
-- [ ] [P1] Audit log endpoint (admin)
-- [ ] [P1] Notification events (export complete, invite)
-- [ ] [P2] Webhooks / integrations
-
----
-
-## 5) Worker System (Background Processing)
-
-### 5.1 Queue & worker foundation
-- [ ] [P0] Choose worker framework (Celery/RQ/BullMQ/etc)
-- [ ] [P0] Configure Redis broker and retry policy
-- [ ] [P0] Create job runner + job status updates in DB
-
-### 5.2 Ingestion pipeline jobs
-- [ ] [P0] PDF text extraction job
-- [ ] [P0] Chunking job (preserve pages/headings)
-- [ ] [P0] Embeddings job (store vectors in DB)
-- [ ] [P1] OCR job (optional) for scanned PDFs
-- [ ] [P1] URL fetch + HTML-to-text job with sanitization and timeout
-
-### 5.3 Writing jobs
-- [ ] [P0] Source summarization job
-- [ ] [P0] Outline generation job
-- [ ] [P0] Draft generation job (section loop, citations)
-- [ ] [P1] Provider failover (AI outage fallback)
-- [ ] [P2] Quality verification job (claim traceability graph)
-
-### 5.4 Export jobs
-- [ ] [P0] DOCX export job
-- [ ] [P0] PDF export job
-- [ ] [P1] Large document export optimization (streaming, memory control)
+### Audit & Usage
+- [ ] [P0] Tables:
+  - [ ] `audit_events` (workspace_id, actor_user_id, action, entity_type, entity_id, payload json)
+  - [ ] `usage_events` (workspace_id, type: llm_tokens/ocr_pages/storage_bytes, amount, meta json)
+- [ ] [P0] Indexes:
+  - [ ] audit by `(workspace_id, created_at)`
+  - [ ] usage by `(workspace_id, type, created_at)`
 
 ---
 
-## 6) AI Layer (Provider Abstraction + Guardrails)
+## P0 — Migrations & Schema Artifacts
 
-### 6.1 Provider abstraction
-- [ ] [P0] Create AI client interface:
-  - [ ] `embed(texts[])`
-  - [ ] `generate(prompt, context)`
-  - [ ] timeout/retry/backoff
-- [ ] [P0] Implement at least 1 provider (OpenAI or chosen)
-- [ ] [P1] Add second provider as fallback
-
-### 6.2 Prompting & formatting
-- [ ] [P0] Define standard system prompts:
-  - [ ] summarizer
-  - [ ] outline planner
-  - [ ] section writer (RAG)
-  - [ ] citation formatter
-- [ ] [P0] Enforce output schema including citation markers
-- [ ] [P0] Store prompts + versions for reproducibility
-
-### 6.3 Anti-hallucination rules
-- [ ] [P0] Strict mode: reject paragraphs without citations
-- [ ] [P1] Claim-to-snippet verification (basic)
-- [ ] [P1] Citation misattribution checks (detect wrong mapping)
-- [ ] [P2] Source graph scoring (claim traceability)
-
-### 6.4 Cost tracking (if relevant)
-- [ ] [P1] Track tokens and cost per job
-- [ ] [P1] Budget limits per project/user
-- [ ] [P1] Regression guard: cost per 1000 calls threshold
+- [ ] [P0] Add migration framework (choose based on stack):
+  - [ ] Node: Prisma/Drizzle/Knex or SQL migrations runner
+  - [ ] Python: Alembic or raw SQL runner
+- [ ] [P0] Create SQL migration files:
+  - [ ] `infra/db/migrations/0001_init.sql` (schemas + tables + constraints)
+  - [ ] `infra/db/migrations/0002_indexes.sql` (all indexes)
+  - [ ] `infra/db/migrations/0003_seed.sql` (roles, default settings)
+- [ ] [P0] Add DB initialization scripts (docker entrypoint compatible)
+- [ ] [P0] Produce `docs/database/ERD.md`:
+  - [ ] ASCII ERD diagram
+  - [ ] short “table purpose” notes
 
 ---
 
-## 7) Storage (Files, Exports, and Access Control)
+## P0 — 1C) Database Utility Layer
 
-### 7.1 File storage
-- [ ] [P0] Decide dev storage (local) + prod storage (S3 compatible)
-- [ ] [P0] Implement upload storage adapter (put/get/delete)
-- [ ] [P0] Store file metadata (hash, size, mime, path)
-- [ ] [P0] Secure file access (signed URLs or proxy with RBAC)
-- [ ] [P1] Implement dedup by hash per project
+### Connection & Config
+- [ ] [P0] Implement DB config (env):
+  - [ ] `DATABASE_URL`
+  - [ ] `DB_POOL_SIZE`
+  - [ ] `DB_POOL_TIMEOUT`
+- [ ] [P0] Connection pooling
+- [ ] [P0] DB health check helper used by `/ready`
 
-### 7.2 Export storage
-- [ ] [P0] Save exports (docx/pdf) and allow download
-- [ ] [P0] Ensure only project members can download
-- [ ] [P1] Add cleanup policy for old exports
+### Migration Runner
+- [ ] [P0] Add CLI scripts:
+  - [ ] `db:migrate`
+  - [ ] `db:rollback` (even if limited, document behavior)
+  - [ ] `db:status` (optional)
+- [ ] [P0] Add `make` targets or npm/pnpm scripts
 
----
+### Transactions & Query Helpers
+- [ ] [P0] Add transaction helper (`withTransaction`)
+- [ ] [P0] Add pagination utilities:
+  - [ ] cursor-based (preferred) + stable ordering
+- [ ] [P0] Add soft delete helpers:
+  - [ ] filters to exclude `deleted_at IS NOT NULL` by default
 
-## 8) Frontend (Web UI) — Pages, Components, UX
-
-### 8.1 App shell
-- [ ] [P0] Initialize web app (Next.js/React) with routing
-- [ ] [P0] Auth screens: signup/login/forgot/reset
-- [ ] [P0] App layout: sidebar/topbar, project switcher
-
-### 8.2 Dashboard & projects
-- [ ] [P0] Projects list page
-- [ ] [P0] Create/edit project modals
-- [ ] [P0] Project settings page (members + roles)
-
-### 8.3 Source library
-- [ ] [P0] Upload PDF UI with progress
-- [ ] [P0] Add URL source UI
-- [ ] [P0] Library table (status, type, date, actions)
-- [ ] [P0] Source detail view (metadata + extracted text preview + summary)
-
-### 8.4 Search UI
-- [ ] [P0] Search bar + results list
-- [ ] [P0] Show snippet, source title, page, open source
-- [ ] [P1] Filters (source/type/date)
-- [ ] [P1] “Save snippet to notes” feature
-
-### 8.5 Outline builder
-- [ ] [P0] Outline generation UI (topic + options)
-- [ ] [P0] Outline editor (reorder, add/remove sections)
-- [ ] [P0] Version display + lock/unlock
-- [ ] [P1] Outline templates
-
-### 8.6 Draft editor (core)
-- [ ] [P0] Rich text editor integration (TipTap/Lexical/etc)
-- [ ] [P0] Generate draft button + job status
-- [ ] [P0] Render citations as chips/footnotes
-- [ ] [P0] Reference list panel
-- [ ] [P1] Undo/redo, version history
-- [ ] [P1] Comments + collaboration basics
-
-### 8.7 Export UI
-- [ ] [P0] Export page: choose style + format (docx/pdf)
-- [ ] [P0] Download links + history list
-- [ ] [P1] Export preview + warnings (missing citations)
-
-### 8.8 Quality UX details
-- [ ] [P0] Empty states everywhere (no projects, no sources)
-- [ ] [P0] Error toasts and retry actions
-- [ ] [P1] Keyboard shortcuts for editor
-- [ ] [P1] Accessibility pass (labels, contrast)
+### Repositories (Minimum)
+- [ ] [P0] Workspace repository:
+  - [ ] create workspace, add member, list members
+- [ ] [P0] Project repository:
+  - [ ] create project, list projects
+- [ ] [P0] Source repository:
+  - [ ] create source, add version, attach file pointer, list sources
+- [ ] [P0] Pipeline jobs repository:
+  - [ ] enqueue job, claim job, mark success/fail, record attempts
+- [ ] [P0] Draft repository:
+  - [ ] create draft, create draft_version, list versions
+- [ ] [P0] Citation repository:
+  - [ ] add citation(s), list citations for draft_version
 
 ---
 
-## 9) Testing (Complete Test Suite)
+## P1 — Local Dev Database Stack (Docker)
 
-> Implement tests aligned to the master test script list you created.
-
-### 9.1 Unit tests
-- [ ] [P0] Unit tests: auth, RBAC, sources ingestion, chunking, embeddings enqueue, citations formatters, export formatters
-- [ ] [P0] Deterministic fixtures (fixed clock/random seed)
-- [ ] [P0] No-network rule for unit tests
-
-### 9.2 Integration tests
-- [ ] [P0] Integration: ingestion → embed → search
-- [ ] [P0] Integration: outline → draft with citations
-- [ ] [P0] Integration: export pipeline large doc
-- [ ] [P1] Provider failover tests
-
-### 9.3 API contract tests
-- [ ] [P0] OpenAPI schema snapshot and breaking-change detection
-- [ ] [P0] Pagination/filter/sort consistency tests
-- [ ] [P0] Standard error format tests
-- [ ] [P0] Permissions tests per endpoint
-
-### 9.4 E2E UI tests (Playwright)
-- [ ] [P0] Signup/login + basic auth
-- [ ] [P0] Create project + upload PDF
-- [ ] [P0] Search + view source
-- [ ] [P0] Outline + draft + citations
-- [ ] [P0] Export docx/pdf
-- [ ] [P1] Collaboration flow
-- [ ] [P1] Credits exhausted flow (if billing)
-
-### 9.5 Non-functional tests
-- [ ] [P1] Load tests (k6/locust): concurrent uploads, draft generations, search latency p95, export latency
-- [ ] [P1] Chaos tests: AI timeout retry, vector index recovery, worker crash resume
-
-### 9.6 AI eval harness
-- [ ] [P1] Create offline eval dataset fixtures
-- [ ] [P1] Summarization faithfulness scoring
-- [ ] [P1] Citation coverage rate
-- [ ] [P1] Hallucination rate in strict mode
-- [ ] [P1] Bluebook format accuracy suite
-- [ ] [P1] Regression suite for fixed prompt bugs
+- [ ] [P1] Add `infra/docker-compose.db.yml` (or extend existing):
+  - [ ] Postgres service
+  - [ ] Admin tool (pgAdmin optional)
+  - [ ] Volume for persistence
+- [ ] [P1] Add `scripts/db-reset` (drop + recreate + migrate + seed)
+- [ ] [P1] Add `.env.example` DB section with safe defaults
 
 ---
 
-## 10) CI/CD (GitHub Actions)
+## P1 — Tests & Verification
 
-### 10.1 Pipelines
-- [ ] [P0] Lint workflow (web + api)
-- [ ] [P0] Unit tests workflow
-- [ ] [P0] Integration tests workflow (with Postgres + Redis services)
-- [ ] [P0] E2E workflow (Playwright with web+api+worker)
-- [ ] [P1] Security scans (deps + SAST)
-- [ ] [P1] Upload artifacts: coverage, junit xml, playwright report
-
-### 10.2 Deployment
-- [ ] [P1] Create staging deployment workflow
-- [ ] [P1] Create production deployment workflow (tag-based)
-- [ ] [P1] Add DB migration step to deploy pipeline
-- [ ] [P1] Rollback strategy (previous image + migrations safe plan)
+- [ ] [P1] Add DB integration test setup:
+  - [ ] Test container / docker service for CI
+  - [ ] Test migration application from scratch
+- [ ] [P1] Add repository tests:
+  - [ ] create workspace/project/source/draft and assert retrieval
+- [ ] [P1] Add readiness test:
+  - [ ] start API → `/ready` returns dependency status JSON
 
 ---
 
-## 11) Security Tooling & Compliance
+## P2 — Performance & Hardening
 
-### 11.1 Automated security checks
-- [ ] [P0] Dependency scanning (npm/pip) in CI
-- [ ] [P1] SAST config (semgrep/bandit/eslint security)
-- [ ] [P1] DAST smoke (OWASP ZAP) for auth bypass checks
-- [ ] [P1] RBAC privilege escalation tests
-
-### 11.2 Data governance
-- [ ] [P1] Project delete = remove DB rows + delete stored files
-- [ ] [P1] Export/delete user data (basic)
-- [ ] [P2] Data residency / region configuration docs (India-first)
-
----
-
-## 12) Observability (Prod Readiness)
-
-- [ ] [P1] Centralized logs (JSON)
-- [ ] [P1] Request tracing (request_id across API + worker)
-- [ ] [P1] Metrics dashboard (latency, queue depth, errors)
-- [ ] [P1] Alert rules (worker down, queue backlog, DB errors)
+- [ ] [P2] Add query plans / index review for top endpoints
+- [ ] [P2] Add row-level security strategy (optional future):
+  - [ ] enforce workspace scoping in queries
+- [ ] [P2] Add retention policies:
+  - [ ] audit log retention (configurable)
+  - [ ] job attempts retention
+- [ ] [P2] Add partitioning plan (if needed later):
+  - [ ] `usage_events` by month
+  - [ ] `audit_events` by month
 
 ---
 
-## 13) Billing / Usage (Only if you need it)
-
-- [ ] [P1] Credits model definition (what costs what)
-- [ ] [P1] Track usage per job (tokens, embeddings, exports)
-- [ ] [P1] Subscription state machine
-- [ ] [P1] Webhook verification for payment provider
-- [ ] [P1] UI: usage dashboard + limits
-- [ ] [P2] Team billing (org-level)
-
----
-
-## 14) Content, Templates, and Onboarding
-
-- [ ] [P0] Sample project + sample sources for demo
-- [ ] [P0] Onboarding checklist in UI (“upload first source”)
-- [ ] [P1] Template library:
-  - [ ] Legal brief
-  - [ ] Business plan
-  - [ ] Academic report
-  - [ ] Blog/article
-
----
-
-## 15) Release Checklist (Before launch)
-
-### 15.1 Functional
-- [ ] [P0] Upload works reliably (PDF + URL)
-- [ ] [P0] Search returns relevant snippets with page locators
-- [ ] [P0] Draft generation produces citations correctly
-- [ ] [P0] Export docx/pdf passes sanity check (headings + references)
-- [ ] [P0] RBAC prevents data leaks
-
-### 15.2 Quality
-- [ ] [P0] Full test suite green in CI
-- [ ] [P1] Load test baseline results recorded
-- [ ] [P1] Security scans clean or documented exceptions
-
-### 15.3 Operations
-- [ ] [P1] Backups configured (DB + storage)
-- [ ] [P1] Monitoring + alerts configured
-- [ ] [P1] Incident runbook in `docs/ops/runbook.md`
-
----
-
-## 16) Optional Advanced Roadmap (v2+)
-
-- [ ] [P2] Claim traceability graph UI (claim → snippet → source)
-- [ ] [P2] Human approval loop for AI output
-- [ ] [P2] Multi-agent orchestration (planner/writer/verifier)
-- [ ] [P2] Advanced plagiarism workflows + similarity highlights
-- [ ] [P2] Team workflows: approvals, tasks, assignments
-- [ ] [P2] Public sharing with redactions and permission controls
-
----
+## Definition of Done
+- [ ] DB list doc exists and matches product scope
+- [ ] Migrations create all schemas/tables/constraints/indexes cleanly
+- [ ] DB utility layer can:
+  - [ ] connect with pooling
+  - [ ] migrate/seed/reset
+  - [ ] run transactions safely
+- [ ] Repositories support core flows:
+  - [ ] create workspace → project → source → job → draft_version → citations → export

@@ -1,0 +1,71 @@
+name: Observability CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  observability-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+
+    - name: Start observability stack
+      run: |
+        docker-compose -f infra/docker-compose.observability.yml up -d
+        sleep 30  # Wait for services to start
+
+    - name: Check services health
+      run: |
+        curl -f http://localhost:3100/ready  # Loki
+        curl -f http://localhost:9090/-/ready  # Prometheus
+        curl -f http://localhost:3000/api/health  # Grafana
+        curl -f http://localhost:16686/  # Jaeger
+
+    - name: Start API service
+      run: |
+        cd backend
+        OBS_ENABLED=true python -m app.main &
+        sleep 10
+
+    - name: Test health endpoints
+      run: |
+        curl -f http://localhost:8000/health
+        curl -f http://localhost:8000/ready
+
+    - name: Test metrics endpoint
+      run: |
+        curl -f http://localhost:8000/metrics | grep http_requests_total
+
+    - name: Run smoke test
+      run: |
+        # Make a test request to generate logs/metrics/traces
+        curl -X POST http://localhost:8000/api/v1/projects -H "Content-Type: application/json" -d '{"name": "Test Project"}'
+        curl http://localhost:8000/api/v1/projects
+
+    - name: Verify Prometheus targets
+      run: |
+        curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job == "paperpilot-api") | .health' | grep -q "up"
+
+    - name: Check logs in Loki
+      run: |
+        # Query Loki for recent logs
+        curl -s "http://localhost:3100/loki/api/v1/query_range?query={job=\"paperpilot-api\"}&start=$(date +%s - 300)&end=$(date +%s)&limit=1" | jq '.data.result | length > 0'
+
+    - name: Stop services
+      run: |
+        docker-compose -f infra/docker-compose.observability.yml down
+        pkill -f "python -m app.main"

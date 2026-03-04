@@ -36,11 +36,26 @@
 - Run API: `python -m backend.app` (from backend/)
 - Run worker: `npm run worker` (from apps/worker)
 
+### Trading Engine API (Paper trading demo)
+- Set an API key: `export PAPERPILOT_API_KEY=dev-key` (PowerShell: `$env:PAPERPILOT_API_KEY="dev-key"`)
+- Start the API as above, then call endpoints with required headers:
+  - `X-API-Key: dev-key`
+  - `X-Tenant-Id: demo-tenant`
+- REST:
+  - Health: `GET /api/v1/trading/health`
+  - Create order: `POST /api/v1/trading/orders`
+  - Portfolio: `GET /api/v1/trading/portfolio`
+  - PnL: `GET /api/v1/trading/pnl`
+  - Process bar (feeds demo strategy): `POST /api/v1/trading/market/bar`
+- WebSocket stream:
+  - Connect to `ws://localhost:8000/api/v1/trading/ws` with the same headers to receive `order.*`, `fill`, and `portfolio.updated` events.
+
 ## Testing
 
 Run unit tests: `npm run test:unit`
 Run integration tests: `npm run test`
 Run e2e tests: `npm run test:e2e`
+Run trading integration tests: `python -m pytest backend/app/tests/test_trading_api.py`
 
 ## Contributing
 

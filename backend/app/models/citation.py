@@ -1,12 +1,24 @@
-from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey
+class Citation(Base):
+    __tablename__ = "citations"
+=======
+from sqlalchemy import Column, Text, Float, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import relationship
 from .base import Base
 
 class Citation(Base):
     __tablename__ = "citations"
 
-    id = Column(Integer, primary_key=True, index=True)
-    draft_id = Column(Integer, ForeignKey("drafts.id"), nullable=False)
-    chunk_id = Column(Integer, ForeignKey("source_chunks.id"), nullable=False)
-    style = Column(String, nullable=False)  # APA, MLA, etc.
-    page_locator = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    quote = Column(Text, nullable=False)
+    confidence = Column(Float, nullable=False, default=1.0)
+
+    # Foreign Keys
+    draft_version_id = Column(String, ForeignKey("draft_versions.id"), nullable=False)
+    source_span_id = Column(String, ForeignKey("source_spans.id"), nullable=False)
+
+    # Relationships
+    draft_version = relationship("DraftVersion", back_populates="citations")
+    source_span = relationship("SourceSpan", back_populates="citations")
+
+    __table_args__ = (
+        UniqueConstraint('draft_version_id', 'source_span_id', name='unique_draft_version_source_span'),
+    )

@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: paperpilot-postgres
+    environment:
+      POSTGRES_DB: paperpilot
+      POSTGRES_USER: paperpilot
+      POSTGRES_PASSWORD: paperpilot_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/db/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperpilot -d paperpilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - paperpilot
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: paperpilot-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@paperpilot.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - paperpilot
+
+volumes:
+  postgres_data:
+
+networks:
+  paperpilot:
+    driver: bridge
