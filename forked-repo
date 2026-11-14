@@ -1,0 +1,6 @@
+
+Command:
+curl -s https://api.github.com/repos/mohithlingosme/PaperPilot
+
+Terminal Output:
+PASTE THE ACTUAL JSON RESPONSE FROM STEP 1 HERE
